@@ -313,10 +313,16 @@ def main():
         # touch the state file to reset the time in case logtail doesn't
         # find any new lines (and thus won't update the statefile).
         try:
-            state_file_age = os.stat(logtail_state_file)[stat.ST_MTIME]
+            try:
+                state_file_age = os.stat(logtail_state_file)[stat.ST_MTIME]
+            except OSError as e:
+                state_file_age = os.stat(log_file)[stat.ST_CTIME]
+
 
             # Calculate now() - state file age to determine check duration.
             duration = floor(time()) - floor(state_file_age)
+            if duration == 0:
+                duration = 1
             logger.debug("Setting duration to %s seconds." % duration)
 
         except OSError, e:
