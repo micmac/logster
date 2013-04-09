@@ -312,27 +312,20 @@ def main():
         # ran. Replace the state file if it has gone missing. While we are her,
         # touch the state file to reset the time in case logtail doesn't
         # find any new lines (and thus won't update the statefile).
+        state_file_age = None
         try:
-            try:
-                state_file_age = os.stat(logtail_state_file)[stat.ST_MTIME]
-            except OSError as e:
-                state_file_age = os.stat(log_file)[stat.ST_CTIME]
+            state_file_age = os.stat(logtail_state_file)[stat.ST_MTIME]
+        except OSError as e:
+            state_file_age = os.stat(log_file)[stat.ST_CTIME]
 
 
-            # Calculate now() - state file age to determine check duration.
-            duration = floor(time()) - floor(state_file_age)
-            if duration == 0:
-                duration = 1
-            logger.debug("Setting duration to %s seconds." % duration)
-
-        except OSError, e:
-            logger.info('Writing new state file and exiting. (Was either first run, or state file went missing.)')
-            input = os.popen(shell_tail)
-            retval = input.close()
-            if (retval != 256):
-                logger.warning('%s returned bad exit code %s' % (shell_tail, retval))
-            end_locking(lockfile, logtail_lock_file)
-            sys.exit(0)
+        # Calculate now() - state file age to determine check duration.
+        # exit if duration is 0
+        duration = floor(time()) - floor(state_file_age)
+        if duration == 0:
+            logger.debug("Duration is 0s, exiting" % duration)
+            exit 0
+        logger.debug("Setting duration to %s seconds." % duration)
 
         # Open a pipe to read input from logtail.
         input = os.popen(shell_tail)
