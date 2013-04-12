@@ -55,12 +55,13 @@ from time import time, strftime, gmtime
 from math import floor
 
 # Local dependencies
-from logster.logster_helper import LogsterParsingException, LockingError, CloudWatch, CloudWatchException
+sys.path.append("/usr/share/logster")
+from logster_helper import LogsterParsingException, LockingError
 
 # Globals
 gmetric = "/usr/bin/gmetric"
 logtail = "/usr/sbin/logtail2"
-log_dir = "/var/log/logster"
+log_dir = "/tmp/logster"
 state_dir = "/var/run"
 
 script_start_time = time()
@@ -92,8 +93,8 @@ cmdline.add_option('--aws-secret-key', action='store', default=os.getenv('AWS_SE
 cmdline.add_option('--state-dir', '-s', action='store', default=state_dir,
                     help='Where to store the logtail state file.  Default location %s' % state_dir)
 cmdline.add_option('--output', '-o', action='append',
-                   choices=('graphite', 'ganglia', 'stdout', 'cloudwatch'),
-                   help="Where to send metrics (can specify multiple times). Choices are 'graphite', 'ganglia', 'cloudwatch' or 'stdout'.")
+                   choices=('graphite', 'ganglia', 'stdout'),
+                   help="Where to send metrics (can specify multiple times). Choices are 'graphite', 'ganglia' or 'stdout'.")
 cmdline.add_option('--stdout-separator', action='store', default="_", dest="stdout_separator",
                     help='Seperator between prefix/suffix and name for stdout. Default is \"%default\".')
 cmdline.add_option('--dry-run', '-d', action='store_true', default=False,
@@ -114,14 +115,8 @@ if not options.output:
 if 'graphite' in options.output and not options.graphite_host:
     cmdline.print_help()
     cmdline.error("You must supply --graphite-host when using 'graphite' as an output type.")
-if 'cloudwatch' in options.output and not options.aws_key and not options.aws_secret_key:
-    cmdline.print_help()
-    cmdline.error("You must supply --aws-key and --aws-secret-key or Set environment variables. AWS_ACCESS_KEY_ID for --aws-key, AWS_SECRET_ACCESS_KEY_ID for --aws-secret-key")
 
 class_name = arguments[0]
-if class_name.find('.') == -1:
-    # If it's a single name, find it in the base logster package
-    class_name = 'logster.parsers.%s.%s' % (class_name, class_name)
 log_file   = arguments[1]
 state_dir  = options.state_dir
 logtail    = options.logtail
@@ -161,8 +156,6 @@ def submit_stats(parser, duration, options):
         submit_graphite(metrics, options)
     if 'stdout' in options.output:
         submit_stdout(metrics, options)
-    if 'cloudwatch' in options.output:
-        submit_cloudwatch(metrics, options)
 
 def submit_stdout(metrics, options):
     for metric in metrics:
@@ -218,34 +211,6 @@ def submit_graphite(metrics, options):
         if (not options.dry_run):
             s.close()
 
-def submit_cloudwatch(metrics, options):
-    for metric in metrics:
-        
-        if (options.metric_prefix != ""):
-            metric.name = options.metric_prefix + "." + metric.name
-        if (options.metric_suffix is not None):
-            metric.name = metric.name + "." + options.metric_suffix
-        
-        metric.timestamp = strftime("%Y%m%dT%H:%M:00Z", gmtime(metric.timestamp))
-        metric.units = "None"
-        metric_string = "%s %s %s" % (metric.name, metric.value, metric.timestamp)
-        logger.debug("Submitting CloudWatch metric: %s" % metric_string)
-
-        if (not options.dry_run):
-            try:
-                cw = CloudWatch(options.aws_key, options.aws_secret_key, metric).get_instance_id()
-            except CloudWatchException:
-                logger.debug("Is this machine really amazon EC2?")
-                sys.exit(1)
-
-            try:
-                cw.put_data()
-            except CloudWatchException, e:
-                logger.debug(e.message)
-                sys.exit(1)
-        else:       
-            print metric_string
-
 def start_locking(lockfile_name):
     """ Acquire a lock via a provided lockfile filename. """
     if os.path.exists(lockfile_name):
@@ -291,10 +256,13 @@ def main():
     logger.info("Executing parser %s on logfile %s" % (class_name, log_file))
     logger.debug("Using state file %s" % logtail_state_file)
 
-    # Import and instantiate the class from the module passed in.
-    module_name, parser_name = class_name.rsplit('.', 1)
-    module = __import__(module_name, globals(), locals(), [parser_name])
-    parser = getattr(module, parser_name)(option_string=options.parser_options)
+    # Import and instantiate the class from the module passed in.  Files and Class names must be the same.
+    try:
+        module = __import__(class_name)
+        parser = getattr(module, class_name)(option_string=options.parser_options)
+    except Exception, e:
+        print "Failed to instantiate parser (line %s): %s" % (lineno(), e)
+        sys.exit(1)
 
     # Check for lock file so we don't run multiple copies of the same parser 
     # simultaneuosly. This will happen if the log parsing takes more time than
@@ -317,6 +285,7 @@ def main():
             state_file_age = os.stat(logtail_state_file)[stat.ST_MTIME]
         except OSError as e:
             state_file_age = os.stat(log_file)[stat.ST_CTIME]
+            logger.debug("Using log file creation time as file age: %s" % state_file_age)
 
 
         # Calculate now() - state file age to determine check duration.
@@ -324,7 +293,7 @@ def main():
         duration = floor(time()) - floor(state_file_age)
         if duration == 0:
             logger.debug("Duration is 0s, exiting" % duration)
-            exit 0
+            sys.exit(0)
         logger.debug("Setting duration to %s seconds." % duration)
 
         # Open a pipe to read input from logtail.
