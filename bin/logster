@@ -248,6 +248,7 @@ def end_locking(lockfile_fd, lockfile_name):
 
 def main():
 
+    start_time = time()
     dirsafe_logfile = log_file.replace('/','-')
     logtail_state_file = '%s/logtail-%s%s.state' % (state_dir, class_name, dirsafe_logfile)
     logtail_lock_file  = '%s/logtail-%s%s.lock' % (state_dir, class_name, dirsafe_logfile)
@@ -292,7 +293,7 @@ def main():
 
         # Calculate now() - state file age to determine check duration.
         # exit if duration is 0
-        duration = floor(time()) - floor(state_file_age)
+        duration = floor(start_time) - floor(state_file_age)
         if duration == 0:
             logger.debug("Duration is 0s, exiting" % duration)
             sys.exit(0)
